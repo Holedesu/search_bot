@@ -137,24 +137,23 @@ async def generate_pdf(title, pics_url_array, text_array):
 
         if not first_page and text_y - (header_height + text_height) < min_text_space:
             c.showPage()
-            c.setFont("OpenSansBold", 10)
             text_y = page_height - 50
 
         first_page = False
 
 
         c.setFont("OpenSansBold", 11)
-        header = f"{title} {idx + 1}"
+        header = f"Объявление: {idx + 1}"
         c.drawString(40, text_y, header)
-        text_y -= 20
+        text_y -= 10
 
         c.setFont("OpenSans", 10)
         h = wrap_text(c, text[:100], 40, text_y, max_text_width)
-        text_y -= h + 15
+        text_y -= h + 10
 
         c.setFont("OpenSans", 10)
         h = wrap_text(c, text, 40, text_y, max_text_width)
-        text_y -= h + 15
+        text_y -= h + 30
 
     c.save()
 
