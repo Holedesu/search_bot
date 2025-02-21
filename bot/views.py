@@ -1,7 +1,9 @@
 import asyncio
 import os
 import logging
-import requests
+import ssl
+
+import aiohttp
 
 from io import BytesIO
 
@@ -64,7 +66,7 @@ async def parse_avito(query: str, limit=50):
         await page.goto(search_url)
         logger.debug(f"Перешли на страницу: {search_url}")
 
-        await scroll_smoothly(page, steps=15, delay=0.2)
+        await scroll_smoothly(page, steps=10, delay=0.3)
 
         items = await page.query_selector_all("div.iva-item-content-OWwoq")
         logger.info(f"Найдено {len(items)} элементов на странице")
@@ -95,21 +97,37 @@ async def parse_avito(query: str, limit=50):
             pics_results.append(img_url)
             text_results.append(raw_text)
 
+        image_readers = await download_all_images(pics_results)
         await browser.close()
         logger.debug("Браузер Chromium закрыт")
 
-    return pics_results, text_results
+    return image_readers, text_results
 
-def download_image(url):
+async def download_image(url):
     if url == "Нет фото":
         return None
+
     try:
-        response = requests.get(url, timeout=1)
-        response.raise_for_status()
-        return ImageReader(BytesIO(response.content))
-    except requests.exceptions.RequestException as e:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=5, ssl=ssl_context) as response:
+                if response.status == 200:
+                    data = await response.read()  # Считываем данные в бинарном виде
+                    return ImageReader(BytesIO(data))
+                else:
+                    logger.warning(f"Ошибка загрузки {url}: статус {response.status}")
+                    return None
+    except Exception as e:
         logger.warning(f"Ошибка загрузки {url}: {e}")
         return None
+
+async def download_all_images(urls):
+    tasks = [download_image(url) for url in urls]
+    images = await asyncio.gather(*tasks)
+    return images
 
 def wrap_text(c, text, x, y, max_width, test_mode=False):
     styles = getSampleStyleSheet()
@@ -127,7 +145,7 @@ def wrap_text(c, text, x, y, max_width, test_mode=False):
 
     return h
 
-async def generate_pdf_file(title, pics_url_array, text_array, file_path="output.pdf"):
+async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
     logger.info(f"Начинаем генерацию PDF: {file_path}")
 
     page_width, page_height = A4
@@ -140,7 +158,7 @@ async def generate_pdf_file(title, pics_url_array, text_array, file_path="output
     img_width = ((page_width - 77) - (cols - 1) * padding_x) / cols
 
     c.setFont("OpenSans", 14)
-    c.drawString(40, page_height - 30, f"{title}: ")
+    c.drawString(40, page_height - 30, f"Объявление: ")
 
     y_start = page_height - img_height - 40
     x_start = 100
@@ -152,9 +170,8 @@ async def generate_pdf_file(title, pics_url_array, text_array, file_path="output
         x = x_start + col * (img_width - 23)
         y = y_start - (row * (img_height + padding_y))
 
-        img = download_image(url)
-        if img:
-            c.drawImage(img, x, y, img_width, img_height, preserveAspectRatio=True, anchor='c')
+        if url:
+            c.drawImage(url, x, y, img_width, img_height, preserveAspectRatio=True, anchor='c')
 
     c.showPage()
 
@@ -207,7 +224,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     pics_results, text_results = await parse_avito(message, limit=50)
 
     await update.message.reply_text("Генерирую PDF...")
-    pdf_path = await generate_pdf_file(message, pics_results, text_results, "output.pdf")
+    pdf_path = await generate_pdf_file(pics_results, text_results, "output.pdf")
 
     logger.info(f"Отправляем PDF {pdf_path} пользователю {update.effective_user.id}")
     with open(pdf_path, "rb") as doc:
