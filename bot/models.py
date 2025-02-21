@@ -9,8 +9,3 @@ class TelegramUser(models.Model):
         verbose_name="Дата первого взаимодействия",
         default=datetime.now)
 
-class UserMessage(models.Model):
-    user = models.ForeignKey(TelegramUser, on_delete=models.CASCADE)
-    message = models.TextField()
-    timestamp = models.DateTimeField(default=datetime.now)
-
