@@ -1,0 +1,5 @@
+Django
+python-telegram-bot
+aiohttp
+playwright
+reportlab

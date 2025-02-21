@@ -29,15 +29,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+#---------------------------------------------------------------------
+# Настройка логов
+#---------------------------------------------------------------------
 FONT_PATH_REG = os.path.join("fonts/open-sans", "OpenSans-Regular.ttf")
 FONT_PATH_BOLD = os.path.join("fonts/open-sans", "OpenSans-Bold.ttf")
 pdfmetrics.registerFont(TTFont('OpenSans', FONT_PATH_REG))
 pdfmetrics.registerFont(TTFont('OpenSansBold', FONT_PATH_BOLD))
 
+#---------------------------------------------------------------------
+# Функция для обработки команды /start
+#---------------------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает команду /start, создаёт запись пользователя в БД (если её нет),
+    и отправляет приветственное сообщение.
+    """
     logger.info(f"Пользователь {update.effective_user.id} вызвал /start")
 
-    # Синхронная операция с базой через sync_to_async
     await sync_to_async(TelegramUser.objects.get_or_create)(
         telegram_id=update.effective_user.id,
     )
@@ -45,7 +54,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         'Привет! Я твой бот-помощник. Введи название товара, который вы хотите найти, а я постараюсь найти для вас варианты.'
     )
 
+#---------------------------------------------------------------------
+# Функция для прогрузки данных перед их парсингом с Авито
+#---------------------------------------------------------------------
 async def scroll_smoothly(page, steps=20, delay=0.5):
+    """
+    Выполняет плавный скроллинг страницы вниз для подгрузки данных.
+
+    :param page: Объект страницы Playwright.
+    :param steps: Количество шагов скроллинга.
+    :param delay: Задержка между шагами (в секундах).
+    """
     logger.debug(f"Начинаю плавный скролл: шагов={steps}, задержка={delay}")
     total_height = await page.evaluate("document.body.scrollHeight")
     step_size = total_height / steps
@@ -55,7 +74,17 @@ async def scroll_smoothly(page, steps=20, delay=0.5):
         await asyncio.sleep(delay)
     logger.debug("Скролл завершён")
 
+#---------------------------------------------------------------------
+# Функция парсинга с Авито
+#---------------------------------------------------------------------
 async def parse_avito(query: str, limit=50):
+    """
+    Ищет товары на Avito, парсит страницу, извлекает изображения и описание.
+
+    :param query: Строка поиска.
+    :param limit: Максимальное количество объявлений для обработки.
+    :return: Список объектов ImageReader (изображений) и список текстов объявлений.
+    """
     logger.info(f"Парсим Avito для запроса: '{query}'")
     search_url = f"https://www.avito.ru/all?q={query.replace(' ', '+')}"
 
@@ -103,7 +132,16 @@ async def parse_avito(query: str, limit=50):
 
     return image_readers, text_results
 
+#---------------------------------------------------------------------
+# Функция для загрузки картинки
+#---------------------------------------------------------------------
 async def download_image(url):
+    """
+    Загружает изображение по URL и возвращает объект ImageReader.
+
+    :param url: Ссылка на изображение.
+    :return: Объект ImageReader или None, если загрузка не удалась.
+    """
     if url == "Нет фото":
         return None
 
@@ -124,12 +162,35 @@ async def download_image(url):
         logger.warning(f"Ошибка загрузки {url}: {e}")
         return None
 
+#---------------------------------------------------------------------
+# Функция для загрузки всех картинок
+#---------------------------------------------------------------------
 async def download_all_images(urls):
+    """
+    Загружает все изображения из списка URL асинхронно.
+
+    :param urls: Список строковых URL.
+    :return: Список объектов ImageReader.
+    """
     tasks = [download_image(url) for url in urls]
     images = await asyncio.gather(*tasks)
     return images
 
+#---------------------------------------------------------------------
+# Функция для переноса текста в пдф файле
+#---------------------------------------------------------------------
 def wrap_text(c, text, x, y, max_width, test_mode=False):
+    """
+    Оборачивает текст в заданной области.
+
+    :param c: Объект Canvas.
+    :param text: Текст.
+    :param x: Координата X.
+    :param y: Координата Y.
+    :param max_width: Максимальная ширина строки.
+    :param test_mode: Если True, просто рассчитывает высоту текста без отрисовки.
+    :return: Высота блока текста.
+    """
     styles = getSampleStyleSheet()
     style = styles["Normal"]
     style.wordWrap = "CJK"
@@ -145,7 +206,18 @@ def wrap_text(c, text, x, y, max_width, test_mode=False):
 
     return h
 
+#---------------------------------------------------------------------
+# Функция для создания фала в формате пдф
+#---------------------------------------------------------------------
 async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
+    """
+    Создаёт PDF с изображениями и описаниями объявлений.
+
+    :param pics_url_array: Список объектов ImageReader.
+    :param text_array: Список текстов объявлений.
+    :param file_path: Имя файла.
+    :return: Путь к созданному PDF.
+    """
     logger.info(f"Начинаем генерацию PDF: {file_path}")
 
     page_width, page_height = A4
@@ -158,7 +230,7 @@ async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
     img_width = ((page_width - 77) - (cols - 1) * padding_x) / cols
 
     c.setFont("OpenSans", 14)
-    c.drawString(40, page_height - 30, f"Объявление: ")
+    c.drawString(40, page_height - 30, f"Изображения по запросу: ")
 
     y_start = page_height - img_height - 40
     x_start = 100
@@ -214,7 +286,21 @@ async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
     logger.info(f"PDF успешно сгенерирован: {file_path}")
     return file_path
 
+#---------------------------------------------------------------------
+# Функция обрабатывающая запрос пользователя и возвращающая готовый пдф файл
+#---------------------------------------------------------------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Обрабатывает текстовые сообщения от пользователя в Telegram.
+
+    1. Получает текстовое сообщение от пользователя.
+    2. Запускает процесс парсинга Avito для поиска товаров по введённому запросу.
+    3. Генерирует PDF-файл с найденными объявлениями.
+    4. Отправляет PDF обратно пользователю в Telegram.
+
+    :param update: Объект обновления Telegram API, содержащий данные о входящем сообщении.
+    :param context: Контекст бота, содержащий дополнительную информацию.
+    """
     message = update.message.text
     logger.info(f"Получено сообщение от пользователя {update.effective_user.id}: {message}")
 
