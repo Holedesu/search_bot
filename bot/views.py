@@ -9,6 +9,7 @@ from io import BytesIO
 
 from asgiref.sync import sync_to_async
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pagesizes import A4
@@ -72,59 +73,70 @@ async def scroll_smoothly(page, steps=20, delay=0.5):
     for i in range(steps):
         await page.evaluate(f"window.scrollBy(0, {step_size})")
         await asyncio.sleep(delay)
+    page.wait_for_load_state("div.iva-item-content-OWwoq")
     logger.debug("Скролл завершён")
 
 #---------------------------------------------------------------------
 # Функция парсинга с Авито
 #---------------------------------------------------------------------
-async def parse_avito(query: str, limit=50):
+async def parse_avito(query: str, limit=50, max_attempts=3):
     """
     Ищет товары на Avito, парсит страницу, извлекает изображения и описание.
 
     :param query: Строка поиска.
     :param limit: Максимальное количество объявлений для обработки.
+    :param max_attempts: Количество попыток подгрузки данных при нехватке информации.
     :return: Список объектов ImageReader (изображений) и список текстов объявлений.
     """
     logger.info(f"Парсим Avito для запроса: '{query}'")
-    search_url = f"https://www.avito.ru/all?q={query.replace(' ', '+')}"
+    search_url = f"{query.replace(' ', '+')}"
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        logger.debug("Браузер Chromium запущен (headless=True)")
+        browser = await p.chromium.launch(headless=False)
+        logger.debug("Браузер Chromium запущен (headless=False)")
         page = await browser.new_page()
         await page.goto(search_url)
         logger.debug(f"Перешли на страницу: {search_url}")
 
-        await scroll_smoothly(page, steps=10, delay=0.3)
-
-        items = await page.query_selector_all("div.iva-item-content-OWwoq")
-        logger.info(f"Найдено {len(items)} элементов на странице")
-
+        attempt = 0
         pics_results = []
         text_results = []
 
-        for i, item in enumerate(items[:limit]):
-            img_tag = await item.query_selector("img")
-            img_url = "Нет фото"
-            if img_tag:
-                temp_url = await img_tag.get_attribute("src")
-                if temp_url:
-                    img_url = temp_url
+        while attempt < max_attempts:
+            attempt += 1
+            logger.info(f"Попытка {attempt} загрузки данных...")
 
-            text_div_list = await item.query_selector_all("div.iva-item-bottomBlock-FhNhY")
-            raw_text = "Нет описания"
-            if text_div_list:
-                text_div = text_div_list[0]
-                text_tag = await text_div.query_selector("p")
-                if text_tag:
-                    raw_text_temp = await text_tag.inner_text()
-                    if raw_text_temp:
-                        raw_text = raw_text_temp.strip()
+            await scroll_smoothly(page, steps=10, delay=1.5)
+            items = await page.query_selector_all("div.iva-item-content-OWwoq")
+            logger.info(f"Найдено {len(items)} элементов на странице")
 
-            logger.debug(f"[{i}] Картинка: {img_url}, Текст: {raw_text[:50]}...")
+            for i, item in enumerate(items[:limit]):
+                img_tag = await item.query_selector("img")
+                if img_tag:
+                    temp_url = await img_tag.get_attribute("src")
+                    if temp_url:
+                        img_url = temp_url
 
-            pics_results.append(img_url)
-            text_results.append(raw_text)
+                text_div_list = await item.query_selector_all("div.iva-item-bottomBlock-FhNhY")
+                if text_div_list:
+                    text_div = text_div_list[0]
+                    text_tag = await text_div.query_selector("p")
+                    if text_tag:
+                        raw_text_temp = await text_tag.inner_text()
+                        if raw_text_temp:
+                            raw_text = raw_text_temp.strip()
+
+                logger.debug(f"[{i}] Картинка: {img_url}, Текст: {raw_text[:50]}...")
+
+                pics_results.append(img_url)
+                text_results.append(raw_text)
+
+            if len(pics_results) < 50 or len(text_results) < 50:
+                logger.warning("Недостаточно данных, пробуем ещё раз...")
+                await page.reload()
+                continue
+            else:
+                break
 
         image_readers = await download_all_images(pics_results)
         await browser.close()
