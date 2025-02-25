@@ -102,6 +102,7 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
         pics_results = []
         text_results = []
         title_results = []
+        company_info_results = []
 
         while attempt < max_attempts:
             attempt += 1
@@ -121,6 +122,58 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                 title_tag = await item.query_selector("p")
                 title_text = await title_tag.inner_text()
                 title_results.append(title_text)
+
+
+                company_info_container = []
+                price_tag = await item.query_selector("span")
+                price_result = await price_tag.inner_text()
+
+                # company_info = await item.query_selector("div.iva-item-asideContent-RM1fH")
+                # for com in company_info:
+                #     comp = await com.inner_text()
+                #     print(comp)
+                company_name_tag = await item.query_selector("div.style-root-Dh2i5")
+                if company_name_tag:
+                    company_nam = await company_name_tag.query_selector("p")
+                    company_name = await company_nam.inner_text()
+                else:
+                    company_name = "Не предоставили"
+
+                # company_rating_tag = await item.query_selector("span")
+                # if company_rating_tag:
+                #     company_rating = await company_rating_tag.inner_text()
+                # else:
+                #     company_rating = "Нихуя нет"
+
+                company_info_tag = await item.query_selector("div.style-root-Dh2i5")
+                if company_info_tag and company_name != "Не предоставили":
+                    combined_info = await company_info_tag.inner_text()
+                    combined_info_sliced = combined_info[len(company_name):].replace('\n', '')
+                    company_rating = combined_info_sliced[:3]
+                    company_review = combined_info_sliced[4:]
+                elif company_info_tag and company_name == "Не предоставили":
+                    combined_info = await company_info_tag.inner_text()
+                    co = combined_info.replace('\n', '')
+                    company_review = f"Нет компании \n{co}"
+                # print(company_name)
+                # print(company_rating)
+                # print(company_review)
+                # print()
+                # print
+
+                temp_container = [price_result, company_name, company_rating, company_review]
+                company_info_results.append(temp_container)
+
+                # com_res = company_data.split("\n")
+                # print(f"{i}, {com_res}")
+                # company_info_container = [com_res[0], com_res[2], com_res[5]]
+                # company_info_results.append(company_info_container)
+
+                # company_name_temp = await company_info.query_selector("div.style-root-Dh2i5")
+                # company_name = await company_info.query_selector("p")
+                # company_name_result = await company_name.inner_text()
+                # company_rating = await company_info[1].query_selector("span")
+
                 text_div_list = await item.query_selector_all("div.iva-item-bottomBlock-FhNhY")
                 if text_div_list:
                     text_div = text_div_list[0]
@@ -131,6 +184,8 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                             raw_text = raw_text_temp.strip()
 
                 logger.debug(f"[{i}] Картинка: {img_url}, Заголовок: {title_text}, Текст: {raw_text[:50]}...")
+                logger.info(f"[{i}]Цена: {temp_container[0]}, Компания: {temp_container[1]},"
+                            f" Рейтинг: {temp_container[2]} и {temp_container[3]}")
 
                 pics_results.append(img_url)
                 text_results.append(raw_text)
@@ -146,7 +201,7 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
         await browser.close()
         logger.debug("Браузер Chromium закрыт")
 
-    return image_readers, text_results, title_results
+    return image_readers, text_results, title_results, company_info_results
 
 #---------------------------------------------------------------------
 # Функция для загрузки картинки
@@ -225,7 +280,7 @@ def wrap_text(c, text, x, y, max_width, test_mode=False):
 #---------------------------------------------------------------------
 # Функция для создания фала в формате пдф
 #---------------------------------------------------------------------
-async def generate_pdf_file(pics_url_array, text_array, title_array, file_path="output.pdf"):
+async def generate_pdf_file(pics_url_array, text_array, title_array, company_info, file_path="output.pdf"):
     """
     Создаёт PDF с изображениями и описаниями объявлений.
 
@@ -292,6 +347,26 @@ async def generate_pdf_file(pics_url_array, text_array, title_array, file_path="
         text_y -= 10
 
         c.setFont("OpenSans", 10)
+        company_price = f"Цена: {company_info[idx][0]}"
+        h1 = wrap_text(c, company_price, 40, text_y, max_text_width)
+        text_y -= (h1 + 10)
+
+        c.setFont("OpenSans", 10)
+        company_name = f"Компания/ИП: {company_info[idx][1]}"
+        h1 = wrap_text(c, company_name, 40, text_y, max_text_width)
+        text_y -= (h1 + 10)
+
+        c.setFont("OpenSans", 10)
+        company_rating = f"Рейтинг: {company_info[idx][2]}"
+        h1 = wrap_text(c, company_rating, 40, text_y, max_text_width)
+        text_y -= (h1 + 10)
+
+        c.setFont("OpenSans", 10)
+        company_reviews = f"Кол-во отзывов {company_info[idx][3]}"
+        h1 = wrap_text(c, company_reviews, 40, text_y, max_text_width)
+        text_y -= (h1 + 10)
+
+        c.setFont("OpenSans", 10)
         h1 = wrap_text(c, short_text, 40, text_y, max_text_width)
         text_y -= (h1 + 10)
 
@@ -324,10 +399,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(f"Вы сказали: {message}")
     await update.message.reply_text("Произвожу поиск на Avito...")
 
-    pics_results, text_results, title_results= await parse_avito(message, limit=50)
+    pics_results, text_results, title_results, company_info_container= await parse_avito(message, limit=50)
 
     await update.message.reply_text("Генерирую PDF...")
-    pdf_path = await generate_pdf_file(pics_results, text_results, title_results,"output.pdf")
+    pdf_path = await generate_pdf_file(pics_results, text_results, title_results, company_info_container,"output.pdf")
 
     logger.info(f"Отправляем PDF {pdf_path} пользователю {update.effective_user.id}")
     with open(pdf_path, "rb") as doc:
