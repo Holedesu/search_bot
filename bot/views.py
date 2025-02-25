@@ -69,11 +69,11 @@ async def scroll_smoothly(page, steps=20, delay=0.5):
     logger.debug(f"Начинаю плавный скролл: шагов={steps}, задержка={delay}")
     total_height = await page.evaluate("document.body.scrollHeight")
     step_size = total_height / steps
-
     for i in range(steps):
         await page.evaluate(f"window.scrollBy(0, {step_size})")
+        await page.wait_for_selector("div.iva-item-content-OWwoq")
         await asyncio.sleep(delay)
-    page.wait_for_load_state("div.iva-item-content-OWwoq")
+
     logger.debug("Скролл завершён")
 
 #---------------------------------------------------------------------
@@ -86,7 +86,7 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
     :param query: Строка поиска.
     :param limit: Максимальное количество объявлений для обработки.
     :param max_attempts: Количество попыток подгрузки данных при нехватке информации.
-    :return: Список объектов ImageReader (изображений) и список текстов объявлений.
+    :return: Список объектов ImageReader (изображений), список текстов и список заголовков объявлений.
     """
     logger.info(f"Парсим Avito для запроса: '{query}'")
     search_url = f"{query.replace(' ', '+')}"
@@ -101,12 +101,13 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
         attempt = 0
         pics_results = []
         text_results = []
+        title_results = []
 
         while attempt < max_attempts:
             attempt += 1
             logger.info(f"Попытка {attempt} загрузки данных...")
 
-            await scroll_smoothly(page, steps=10, delay=1.5)
+            await scroll_smoothly(page, steps=14, delay=1.0)
             items = await page.query_selector_all("div.iva-item-content-OWwoq")
             logger.info(f"Найдено {len(items)} элементов на странице")
 
@@ -117,6 +118,9 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                     if temp_url:
                         img_url = temp_url
 
+                title_tag = await item.query_selector("p")
+                title_text = await title_tag.inner_text()
+                title_results.append(title_text)
                 text_div_list = await item.query_selector_all("div.iva-item-bottomBlock-FhNhY")
                 if text_div_list:
                     text_div = text_div_list[0]
@@ -126,7 +130,7 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                         if raw_text_temp:
                             raw_text = raw_text_temp.strip()
 
-                logger.debug(f"[{i}] Картинка: {img_url}, Текст: {raw_text[:50]}...")
+                logger.debug(f"[{i}] Картинка: {img_url}, Заголовок: {title_text}, Текст: {raw_text[:50]}...")
 
                 pics_results.append(img_url)
                 text_results.append(raw_text)
@@ -142,7 +146,7 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
         await browser.close()
         logger.debug("Браузер Chromium закрыт")
 
-    return image_readers, text_results
+    return image_readers, text_results, title_results
 
 #---------------------------------------------------------------------
 # Функция для загрузки картинки
@@ -221,11 +225,12 @@ def wrap_text(c, text, x, y, max_width, test_mode=False):
 #---------------------------------------------------------------------
 # Функция для создания фала в формате пдф
 #---------------------------------------------------------------------
-async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
+async def generate_pdf_file(pics_url_array, text_array, title_array, file_path="output.pdf"):
     """
     Создаёт PDF с изображениями и описаниями объявлений.
 
     :param pics_url_array: Список объектов ImageReader.
+    :param title_array: Список заголовков объявлений.
     :param text_array: Список текстов объявлений.
     :param file_path: Имя файла.
     :return: Путь к созданному PDF.
@@ -282,7 +287,7 @@ async def generate_pdf_file(pics_url_array, text_array, file_path="output.pdf"):
         first_page = False
 
         c.setFont("OpenSansBold", 11)
-        header = f"Объявление: {idx + 1}"
+        header = f"Объявление {idx + 1}: {title_array[idx]}"
         c.drawString(40, text_y, header)
         text_y -= 10
 
@@ -319,10 +324,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(f"Вы сказали: {message}")
     await update.message.reply_text("Произвожу поиск на Avito...")
 
-    pics_results, text_results = await parse_avito(message, limit=50)
+    pics_results, text_results, title_results= await parse_avito(message, limit=50)
 
     await update.message.reply_text("Генерирую PDF...")
-    pdf_path = await generate_pdf_file(pics_results, text_results, "output.pdf")
+    pdf_path = await generate_pdf_file(pics_results, text_results, title_results,"output.pdf")
 
     logger.info(f"Отправляем PDF {pdf_path} пользователю {update.effective_user.id}")
     with open(pdf_path, "rb") as doc:
