@@ -9,7 +9,6 @@ from io import BytesIO
 
 from asgiref.sync import sync_to_async
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.pagesizes import A4
@@ -119,19 +118,15 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                     if temp_url:
                         img_url = temp_url
 
-                title_tag = await item.query_selector("p")
+                title_block = await item.query_selector("div.iva-item-body-GQomw")
+                title_tag = await title_block.query_selector("a")
                 title_text = await title_tag.inner_text()
                 title_results.append(title_text)
 
 
-                company_info_container = []
                 price_tag = await item.query_selector("span")
                 price_result = await price_tag.inner_text()
 
-                # company_info = await item.query_selector("div.iva-item-asideContent-RM1fH")
-                # for com in company_info:
-                #     comp = await com.inner_text()
-                #     print(comp)
                 company_name_tag = await item.query_selector("div.style-root-Dh2i5")
                 if company_name_tag:
                     company_nam = await company_name_tag.query_selector("p")
@@ -139,40 +134,22 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                 else:
                     company_name = "Не предоставили"
 
-                # company_rating_tag = await item.query_selector("span")
-                # if company_rating_tag:
-                #     company_rating = await company_rating_tag.inner_text()
-                # else:
-                #     company_rating = "Нихуя нет"
-
                 company_info_tag = await item.query_selector("div.style-root-Dh2i5")
                 if company_info_tag and company_name != "Не предоставили":
                     combined_info = await company_info_tag.inner_text()
                     combined_info_sliced = combined_info[len(company_name):].replace('\n', '')
                     company_rating = combined_info_sliced[:3]
-                    company_review = combined_info_sliced[4:]
+                    company_review = combined_info_sliced[3:]
                 elif company_info_tag and company_name == "Не предоставили":
                     combined_info = await company_info_tag.inner_text()
                     co = combined_info.replace('\n', '')
                     company_review = f"Нет компании \n{co}"
-                # print(company_name)
-                # print(company_rating)
-                # print(company_review)
-                # print()
-                # print
+                else:
+                    company_rating = "Не предоставлено"
+                    company_review = "Не предоставлено"
 
                 temp_container = [price_result, company_name, company_rating, company_review]
                 company_info_results.append(temp_container)
-
-                # com_res = company_data.split("\n")
-                # print(f"{i}, {com_res}")
-                # company_info_container = [com_res[0], com_res[2], com_res[5]]
-                # company_info_results.append(company_info_container)
-
-                # company_name_temp = await company_info.query_selector("div.style-root-Dh2i5")
-                # company_name = await company_info.query_selector("p")
-                # company_name_result = await company_name.inner_text()
-                # company_rating = await company_info[1].query_selector("span")
 
                 text_div_list = await item.query_selector_all("div.iva-item-bottomBlock-FhNhY")
                 if text_div_list:
@@ -183,14 +160,16 @@ async def parse_avito(query: str, limit=50, max_attempts=3):
                         if raw_text_temp:
                             raw_text = raw_text_temp.strip()
 
+
+
                 logger.debug(f"[{i}] Картинка: {img_url}, Заголовок: {title_text}, Текст: {raw_text[:50]}...")
-                logger.info(f"[{i}]Цена: {temp_container[0]}, Компания: {temp_container[1]},"
+                logger.debug(f"[{i}]Цена: {temp_container[0]}, Компания: {temp_container[1]},"
                             f" Рейтинг: {temp_container[2]} и {temp_container[3]}")
 
                 pics_results.append(img_url)
                 text_results.append(raw_text)
 
-            if len(pics_results) < 50 or len(text_results) < 50:
+            if len(pics_results) < len(items) or len(text_results) < len(items):
                 logger.warning("Недостаточно данных, пробуем ещё раз...")
                 await page.reload()
                 continue
@@ -362,7 +341,7 @@ async def generate_pdf_file(pics_url_array, text_array, title_array, company_inf
         text_y -= (h1 + 10)
 
         c.setFont("OpenSans", 10)
-        company_reviews = f"Кол-во отзывов {company_info[idx][3]}"
+        company_reviews = f"Кол-во отзывов: {company_info[idx][3]}"
         h1 = wrap_text(c, company_reviews, 40, text_y, max_text_width)
         text_y -= (h1 + 10)
 
