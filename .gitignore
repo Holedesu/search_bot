@@ -7,6 +7,7 @@ ENV/
 *.pyo
 __pycache__/
 
+environments/env.env
 *.env
 
 db.sqlite3

@@ -3,3 +3,5 @@ python-telegram-bot
 aiohttp
 playwright
 reportlab
+celery
+redis
